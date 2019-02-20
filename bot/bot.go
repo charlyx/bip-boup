@@ -53,6 +53,8 @@ type BotConfig struct {
 
 	RepoURL   string `json:"-"`
 	GitCommit string `json:"-"`
+
+	RandomToken string `json:"RandomToken"`
 }
 
 type Bot struct {
