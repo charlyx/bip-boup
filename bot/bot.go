@@ -46,8 +46,9 @@ type BotConfig struct {
 
 	Admins []string `json:"Admins"`
 
-	CacheDir string `json:"-"`
-	Database string `json:"database"`
+	CacheDir      string `json:"-"`
+	Database      string `json:"database"`
+	RandomNumbers string `json:"randomnumbers"`
 
 	Modified bool `json:"-"`
 

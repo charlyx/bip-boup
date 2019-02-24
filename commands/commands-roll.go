@@ -1,57 +1,128 @@
 package commands
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"math"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
 
 	"github.com/paulloz/bip-boup/bot"
+	"github.com/paulloz/bip-boup/embed"
 )
 
 func commandRoll(args []string, env *bot.CommandEnvironment, b *bot.Bot) (*discordgo.MessageEmbed, string) {
 	var dices []int
+
 	for _, a := range args {
 		tmp := strings.Split(a, "d")
-		var number string
-		var max string
+		var err error
+		var number int
+		var max int
 		if len(tmp) == 1 {
-			number = "1"
-			max = tmp[0]
+			number = 1
+			max, err = strconv.Atoi(tmp[0])
 		} else {
-			number = tmp[0]
-			max = tmp[1]
+			number, err = strconv.Atoi(tmp[0])
+			max, err = strconv.Atoi(tmp[1])
 		}
-		dices = append(dices, callRandomOrg(number, max, env.Message.Author.ID, b.BotConfig.RandomToken)...)
+		if err != nil {
+			return nil, "Mauvaise requête"
+		}
+		dices = append(dices, createDices(number, max)...)
 	}
 
-	res := env.Message.Author.Mention()
-	for _, d := range dices {
-		res += " " + strconv.Itoa(d)
+	if len(dices) > 50 {
+		return nil, "Wesh, calme-toi et demande moins de 50 dés."
 	}
-	return nil, res
+
+	numbers := readLines(b.RandomNumbers)
+	if len(numbers) < len(dices) {
+		str := callRandomOrg(b.BotConfig.RandomToken, b.RandomNumbers)
+		if len(str) > 0 {
+			return nil, str
+		}
+		numbers = readLines(b.RandomNumbers)
+	}
+
+	var values []int
+	for i := 0; i < len(dices); i++ {
+		d := numbers[i]*float64(dices[i]) + 1
+		values = append(values, int(math.Round(d)))
+	}
+
+	writeNumbers(numbers[len(dices):], b.RandomNumbers)
+	return formatDices(dices, values, env.Message.Author.Mention())
 }
 
-func callRandomOrg(n string, max string, id string, token string) []int {
-	fmt.Println("send:", n, "size", max)
+func formatDices(dices []int, values []int, user string) (*discordgo.MessageEmbed, string) {
+
+	fields := []*discordgo.MessageEmbedField{}
+	res := make(map[int][]int)
+	for i := 0; i < len(values); i++ {
+		res[dices[i]] = append(res[dices[i]], values[i])
+	}
+
+	for key, value := range res {
+		fields = append(fields, embed.EmbedField(strconv.Itoa(key), fmt.Sprint(value), true))
+	}
+
+	return &discordgo.MessageEmbed{
+		Title:       "Voici votre tirage",
+		Description: "Tirage demandé par " + user,
+		Fields:      fields,
+		Footer: &discordgo.MessageEmbedFooter{
+			Text: "Randomisation fourni par random.org",
+		},
+	}, ""
+}
+
+func createDices(number int, max int) []int {
+	var res []int
+	for i := 0; i < number; i++ {
+		res = append(res, max)
+	}
+	return res
+}
+
+func readLines(path string) []float64 {
+	file, _ := os.Open(path)
+	defer file.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+	var numbers []float64
+	for _, elem := range lines {
+		i, err := strconv.ParseFloat(elem, 64)
+		if err == nil {
+			numbers = append(numbers, i)
+		}
+	}
+	return numbers
+}
+
+func callRandomOrg(token string, db string) string {
 	url := "https://api.random.org/json-rpc/1/invoke"
 	params := Params{
-		APIKey: token,
-		N:      n,
-		Min:    "1",
-		Max:    max,
+		APIKey:        token,
+		N:             5,
+		DecimalPlaces: 5,
 	}
 
 	request := Request{
 		Jsonrpc: "2.0",
-		Method:  "generateIntegers",
+		Method:  "generateDecimalFractions",
 		Params:  params,
-		ID:      id,
 	}
 
 	buffer := new(bytes.Buffer)
@@ -71,28 +142,49 @@ func callRandomOrg(n string, max string, id string, token string) []int {
 
 	var data RandomOrg
 	json.Unmarshal(randomOrg, &data)
-	fmt.Println("Receive:", data.Result.RequestsLeft)
-	return data.Result.Random.Data
+	fmt.Println("Data:", data)
+	fmt.Println("Failed:", data.Failed)
+	fmt.Println("Message:", data.Failed.Message)
+	if data.Result.BitsUsed == 0 {
+		return "Error: " + data.Failed.Message
+	}
+
+	writeNumbers(data.Result.Random.Data, db)
+
+	file, _ := os.Create(db)
+
+	for _, nb := range data.Result.Random.Data {
+		fmt.Fprintln(file, nb)
+	}
+	file.Close()
+	return ""
+}
+
+func writeNumbers(numbers []float64, path string) {
+	file, _ := os.Create(path)
+
+	for _, nb := range numbers {
+		fmt.Fprintln(file, nb)
+	}
+	file.Close()
 }
 
 type Request struct {
 	Jsonrpc string `json:"jsonrpc"`
 	Method  string `json:"method"`
 	Params  Params `json:"params"`
-	ID      string `json:"id"`
 }
 
 type Params struct {
-	APIKey string `json:"apiKey"`
-	N      string `json:"n"`
-	Min    string `json:"min"`
-	Max    string `json:"max"`
+	APIKey        string `json:"apiKey"`
+	N             int    `json:"n"`
+	DecimalPlaces int    `json:"decimalPlaces"`
 }
 
 type RandomOrg struct {
 	Jsonrpc string `json:"jsonrpc"`
+	Failed  Failed `json:"error"`
 	Result  Result `json:"result"`
-	ID      string `json:"id"`
 }
 
 type Result struct {
@@ -104,8 +196,14 @@ type Result struct {
 }
 
 type Random struct {
-	Data           []int  `json:"data"`
-	CompletionTime string `json:"completiontime"`
+	Data           []float64 `json:"data"`
+	CompletionTime string    `json:"completiontime"`
+}
+
+type Failed struct {
+	Code    string   `json:"code"`
+	Message string   `json:"message"`
+	Data    []string `json:"data"`
 }
 
 func init() {

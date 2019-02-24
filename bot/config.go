@@ -22,6 +22,15 @@ func (b *BotConfig) checkConfig(instanceID string) {
 		b.Database = fmt.Sprintf(db, dbSuffix)
 	}
 
+	if len(b.RandomNumbers) <= 0 {
+		db := "/tmp/%s-rng.txt"
+		dbSuffix := "bip-boup"
+		if len(instanceID) > 0 {
+			dbSuffix = instanceID
+		}
+		b.RandomNumbers = fmt.Sprintf(db, dbSuffix)
+	}
+
 	b.RepoURL = "https://github.com/paulloz/bip-boup.git"
 
 	b.Modified = false
